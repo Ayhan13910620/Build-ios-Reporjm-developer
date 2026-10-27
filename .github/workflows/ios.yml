@@ -1,0 +1,26 @@
+name: iOS Build Environment
+
+on:
+workflow_dispatch:
+
+jobs:
+ios:
+runs-on: macos-15
+timeout-minutes: 60
+
+steps:
+  - name: Check macOS and Xcode
+    run: |
+      sw_vers
+      xcodebuild -version
+      xcodebuild -showsdks
+
+  - name: Check iOS build tools
+    run: |
+      xcrun --find simctl
+      xcrun simctl list devices available
+
+  - name: Install CocoaPods
+    run: |
+      sudo gem install cocoapods
+      pod --version

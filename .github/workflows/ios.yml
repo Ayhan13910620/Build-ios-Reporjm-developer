@@ -10,8 +10,7 @@ timeout-minutes: 10000
 steps:
 - name: Check macOS and Xcode
 run: sw_vers
-
-  - name: Check Xcode version
+- name: Check Xcode version
     run: xcodebuild -version
 
   - name: Check iOS SDK

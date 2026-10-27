@@ -1,21 +1,114 @@
-name: iOS Build Environment
+name: iOS Build
 
-'on':
-workflow_dispatch:
+on:
+  workflow_dispatch:
+    inputs:
+      scheme:
+        description: "Xcode scheme to build (leave empty to only run the environment and project checks)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
 
 jobs:
-ios:
-runs-on: macos-15
-timeout-minutes: 10000
-steps:
-- name: Check macOS and Xcode
-run: sw_vers
+  build:
+    name: Check environment and build
+    runs-on: macos-26
+    timeout-minutes: 30
 
-  - name: Check Xcode version
-    run: xcodebuild -version
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-  - name: Check iOS SDK
-    run: xcodebuild -showsdks
+      - name: Show macOS, Xcode, Swift and SDK information
+        run: |
+          echo "--- macOS ---"
+          sw_vers
+          echo "--- Selected Xcode ---"
+          xcode-select -p
+          xcodebuild -version
+          echo "--- Swift ---"
+          swift --version
+          echo "--- Installed Xcode versions ---"
+          ls -d /Applications/Xcode*.app
+          echo "--- Available SDKs ---"
+          xcodebuild -showsdks
 
-  - name: Check Swift
-    run: swift --version
+      - name: Detect Xcode workspace or project
+        id: detect
+        run: |
+          WORKSPACE=$(find . -maxdepth 3 -name "*.xcworkspace" -not -path "*/Pods/*" -not -path "*.xcodeproj/*" | head -n 1)
+          PROJECT=$(find . -maxdepth 3 -name "*.xcodeproj" -not -path "*/Pods/*" | head -n 1)
+          if [ -n "$WORKSPACE" ]; then
+            echo "type=workspace" >> "$GITHUB_OUTPUT"
+            echo "path=$WORKSPACE" >> "$GITHUB_OUTPUT"
+            echo "Found workspace: $WORKSPACE"
+          elif [ -n "$PROJECT" ]; then
+            echo "type=project" >> "$GITHUB_OUTPUT"
+            echo "path=$PROJECT" >> "$GITHUB_OUTPUT"
+            echo "Found project: $PROJECT"
+          else
+            echo "type=none" >> "$GITHUB_OUTPUT"
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "::notice::No .xcworkspace or .xcodeproj found in the repository. Nothing to build."
+          fi
+
+      - name: List schemes
+        if: steps.detect.outputs.type != 'none'
+        env:
+          TARGET_TYPE: ${{ steps.detect.outputs.type }}
+          TARGET_PATH: ${{ steps.detect.outputs.path }}
+        run: |
+          if [ "$TARGET_TYPE" = "workspace" ]; then
+            xcodebuild -list -workspace "$TARGET_PATH"
+          else
+            xcodebuild -list -project "$TARGET_PATH"
+          fi
+
+      - name: Build unsigned for iOS device
+        if: steps.detect.outputs.type != 'none' && inputs.scheme != ''
+        env:
+          SCHEME: ${{ inputs.scheme }}
+          TARGET_TYPE: ${{ steps.detect.outputs.type }}
+          TARGET_PATH: ${{ steps.detect.outputs.path }}
+        run: |
+          if [ "$TARGET_TYPE" = "workspace" ]; then
+            FLAG="-workspace"
+          else
+            FLAG="-project"
+          fi
+          xcodebuild build \
+            "$FLAG" "$TARGET_PATH" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package unsigned IPA
+        if: steps.detect.outputs.type != 'none' && inputs.scheme != ''
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app bundle found after the build."
+            exit 1
+          fi
+          mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          cd ipa
+          zip -qry ../App-unsigned.ipa Payload
+          cd ..
+          ls -l App-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        if: steps.detect.outputs.type != 'none' && inputs.scheme != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: App-unsigned-ipa
+          path: App-unsigned.ipa
+          if-no-files-found: error

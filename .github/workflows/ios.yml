@@ -1,6 +1,6 @@
 name: iOS Build Environment
 
-on:
+'on':
 workflow_dispatch:
 
 jobs:
@@ -9,10 +9,13 @@ runs-on: macos-15
 timeout-minutes: 10000
 steps:
 - name: Check macOS and Xcode
-run: |
-sw_vers
-xcodebuild -version
-xcodebuild -showsdks
+run: sw_vers
+
+  - name: Check Xcode version
+    run: xcodebuild -version
+
+  - name: Check iOS SDK
+    run: xcodebuild -showsdks
 
   - name: Check Swift
     run: swift --version
